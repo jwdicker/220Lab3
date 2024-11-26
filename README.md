@@ -7,6 +7,3 @@ By Project Group 38: Jacob Dickerman and Qizhong Wang.
 
 - **domino.cc / domino.h**: 
 
-## Changed Files
-
-- **dcache_stage.c**
