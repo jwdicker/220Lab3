@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-
+void pref_domino_init(HWP* hwp);
 
 
 #ifdef __cplusplus

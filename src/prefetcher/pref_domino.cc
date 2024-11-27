@@ -17,14 +17,15 @@
 #include "prefetcher/pref.param.h"
 #include "prefetcher/pref_common.h"
 #include "prefetcher/pref_domino.h"
-#include "statistics.h"
 #include "prefetcher/pref_domino.param.h"
+#include "statistics.h"
+
 #include <vector>
 #include <map>
 #include <cassert>
 #include <iostream>
 
-
+using namespace std;
 typedef std::map<Addr, uns> AddressPointerMap;
 typedef std::map<Addr, uns> AddressTimerMap;
 
@@ -89,3 +90,31 @@ struct EIT_Entry {
     }
 };
 
+struct Domino_prefetcher_t 
+{
+    HWP_Info* hwp_info;
+    vector<Addr> GHB;
+    map<Addr, EIT_Entry> EIT;
+
+    void init_domino_core(HWP* hwp) {
+        hwp_info = hwp->hwp_info;
+        hwp_info->enabled = TRUE;
+        GHB.clear();
+        EIT.clear();
+    }
+};
+
+//every core has a domino prefetcher
+std::vector<Domino_prefetcher_t> prefetchers;
+
+
+void pref_domino_init(HWP* hwp) {
+    if(!PREF_DOMINO_ON)
+        return;
+    //target LLC
+    if(PREF_UL1_ON){
+        for(uns i = 0; i < NUM_CORES; i++) {
+            prefetchers[i].init_domino_core(hwp);
+        }
+    }
+}
