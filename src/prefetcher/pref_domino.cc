@@ -94,13 +94,88 @@ struct Domino_prefetcher_t
 {
     HWP_Info* hwp_info;
     vector<Addr> GHB;
+    vector<Addr> PointBuf;
     map<Addr, EIT_Entry> EIT;
+    //use for replay
+    Addr first_address;
+    Addr second_adress;
+    //use for record
+    Addr last_address;
 
     void init_domino_core(HWP* hwp) {
         hwp_info = hwp->hwp_info;
         hwp_info->enabled = TRUE;
         GHB.clear();
         EIT.clear();
+        PointBuf.clear();
+        first_address = 0;
+        second_address = 0;
+        last_address = 0;
+    }
+
+
+    void find_new_stream(uns8 proc_id, Addr lineAddr, Addr loadPC) {
+        //first address is empty 
+        if(first_address == 0) {
+            first_address = lineAddr;
+            if(EIT.find(first_address) == EIT.end())
+                return;
+            uns start = EIT[first_address].get_ghb_pointer(EIT[first_address].most_recent_addr);
+
+            PointBuf.clear();
+            for(uns i = 0; i < 32 && start + i < GHB.size(); i++) {
+                PointBuf.push_back(GHB[start + i]);
+            }
+
+            size_t readcount = min(16, PointBuf.size());
+            for(size_t i = 0; i < readcount; i++) {
+                Addr addr = PointBuf.front();
+                PointBuf.erase(PointBuf.begin());
+                Addr lineIndex     = addr >> LOG2(DCACHE_LINE_SIZE);
+                pref_addto_ul1req_queue_set(proc_id, lineIndex, hwp_info->id, 0, loadPC, 0, FALSE);  // FIXME
+            }
+
+        }
+
+        //firstly match first+second
+        second_address = lineAddr;
+        //if no match
+        if(EIT[first_address].find(second_adress) == EIT[first_address].end()) {
+            first_address = lineAddr;
+            second_address = 0;
+
+        }
+    }
+
+    void pref_domino_replay(uns8 proc_id, Addr lineAddr, Addr loadPC, Flag is_hit) {
+
+        /** if prefetch hit, then prefetch from poinbuf */
+        if(is_hit)
+        {
+            first_address = 0;
+            second_address = 0;
+            return;
+        }
+
+        /**cache miss */
+        find_new_stream(proc_id, lineAddr, loadPC);
+    }
+
+    void pref_domino_record(Addr lineAddr) {
+        //initial state: no history
+        if(last_address == 0) {
+            last_address = lineAddr;
+            GHB.push_back(lineAddr);
+        }
+    }
+
+    void pref_domino_train(uns8 proc_id, Addr lineAddr, Addr loadPC, Flag is_hit) {
+        
+        /**first replay then record */
+        pref_domino_replay(proc_id, lineAddr, loadPC, is_hit);
+
+        if(is_hit == FALSE)
+            pref_domino_record(lineAddr)
     }
 };
 
@@ -108,13 +183,27 @@ struct Domino_prefetcher_t
 std::vector<Domino_prefetcher_t> prefetchers;
 
 
-void pref_domino_init(HWP* hwp) {
+void check_flag() 
+{
     if(!PREF_DOMINO_ON)
         return;
+}
+
+void pref_domino_init(HWP* hwp) {
+    check_flag();
     //target LLC
     if(PREF_UL1_ON){
         for(uns i = 0; i < NUM_CORES; i++) {
             prefetchers[i].init_domino_core(hwp);
         }
     }
+}
+
+
+void pref_domino_ul1_prefhit(uns8 proc_id, Addr lineAddr, Addr loadPC, uns32 global_hist) {
+    prefetchers[proc_id].pref_domino_train(proc_id, lineAddr, loadPC, TRUE);
+}
+
+void pref_domino_ul1_miss(uns8 proc_id, Addr lineAddr, Addr loadPC, uns32 global_hist) {
+    prefetchers[proc_id].pref_domino_train(proc_id, lineAddr, loadPC, FALSE);
 }

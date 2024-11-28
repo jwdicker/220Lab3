@@ -53,3 +53,4 @@ DEF_PARAM(pref_domino_on                 , PREF_DOMINO_ON              , Flag   
 DEF_PARAM(debug_pref_domino              , DEBUG_PREF_DOMINO           , Flag   , Flag      , FALSE       ,      ) 
 // maximum pairs in each eit entry 
 DEF_PARAM(pref_domino_pair_n           , PREF_DOMINO_PAIR_N        , uns    , uns       , 16        ,      ) 
+DEF_PARAM(pref_domino_ghb_n           , PREF_DOMINO_GHB_N        , uns    , uns       , 1024        ,      ) 

@@ -8,8 +8,8 @@ extern "C" {
 #endif
 
 void pref_domino_init(HWP* hwp);
-
-
+void pref_domino_ul1_prefhit(uns8 proc_id, Addr lineAddr, Addr loadPC, uns32 global_hist);
+void pref_domino_ul1_miss(uns8 proc_id, Addr lineAddr, Addr loadPC, uns32 global_hist);
 #ifdef __cplusplus
 }
 #endif
