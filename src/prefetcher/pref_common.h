@@ -219,10 +219,8 @@ Flag pref_ul1req_queue_match(Addr line_addr);  // doesn't invalidate
 Flag pref_addto_dl0req_queue(uns8 proc_id, Addr line_index, uns8 prefetcher_id);
 Flag pref_addto_umlc_req_queue(uns8 proc_id, Addr line_index,
                                uns8 prefetcher_id);
-Flag pref_addto_ul1req_queue(uns8 proc_id, Addr line_index, uns8 prefetcher_id);
-Flag pref_addto_ul1req_queue_set(uns8 proc_id, Addr line_index,
-                                 uns8 prefetcher_id, uns distance,
-                                 Addr loadAddr, uns32 global_hist, Flag bw);
+//Flag pref_addto_ul1req_queue(uns8 proc_id, Addr line_index, uns8 prefetcher_id);
+
 
 // prefetch missed in the ul1 and went out on the bus
 void pref_ul1sent(uns8 proc_id, Addr addr, uns8 prefetcher_id);
@@ -256,5 +254,18 @@ void pref_ul1evictOnPF(uns8 pref_proc_id, uns8 evicted_proc_id, Addr addr);
 float pref_get_regionbased_acc(void);
 
 void pref_req_drop_process(uns8 proc_id, uns8 prefetcher_id);
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+Flag pref_addto_ul1req_queue(uns8 proc_id, Addr line_index, uns8 prefetcher_id);
+Flag pref_addto_ul1req_queue_set(uns8 proc_id, Addr line_index,
+                                 uns8 prefetcher_id, uns distance,
+                                 Addr loadAddr, uns32 global_hist, Flag bw);
+#ifdef __cplusplus
+}
+#endif
+
 
 #endif /*  __PREF_COMMON_H__*/
