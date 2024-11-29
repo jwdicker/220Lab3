@@ -31,19 +31,14 @@ typedef std::map<Addr, uns> AddressTimerMap;
 
 
 struct EIT_Entry {
-    AddressPointerMap address_pointer_pair; // a [(B,P0), (C, P1), (F,P2)]
-    AddressTimerMap   address_timer_pair;   // a [(B,T0), (C,T1)]
-    uns timer;
-    Addr most_recent_addr;
-
-    uns most_recent_pointer;
+    AddressPointerMap address_pointer_pair; 
+    AddressTimerMap   address_timer_pair;   
     uns count;
-
+    uns most_recent_pointer;
     //constructor 
     EIT_Entry()
     {
-        timer = 0;
-        most_recent_addr = 0;
+        most_recent_pointer = 0;
         count = 0;
         address_pointer_pair.clear();
         address_timer_pair.clear();
@@ -53,44 +48,30 @@ struct EIT_Entry {
     //  [(B,P0), (C, P1), (F,P2)]  C -> P1
     uns get_ghb_pointer(Addr next_addr)
     {
-        if(address_pointer_pair.find(next_addr) != address_pointer_pair.end())
             return address_pointer_pair[next_addr];
 
-        assert(address_pointer_pair.find(most_recent_addr) != address_pointer_pair.end());
-        return address_pointer_pair[most_recent_addr];
-    }
-
-    //remove oldest
-    void remove_oldest() {
-        AddressTimerMap::iterator it = address_pointer_pair.begin();
-        Addr replace_addr = it->first;
-        uns oldest = it->second;
-        for(AddressTimerMap::iterator it = address_timer_pair.begin(); it != address_timer_pair.end(); it++) 
-        {
-            if(oldest > it->second) {
-                oldest = it->second;
-                replace_addr = it->first;
-            }
-        }
-        assert(address_pointer_pair.find(replace_addr) != address_pointer_pair.end());
-        address_pointer_pair.erase(replace_addr);
-        address_timer_pair.erase(replace_addr);
     }
 
     //insert new pair
     void update(Addr next_addr, uns pointer) {
-        timer = cycle_count;
 
-        if(address_pointer_pair.find(next_addr) == address_pointer_pair.end()) {
-            if(address_pointer_pair.size() >= PREF_DOMINO_PAIR_N) {
-                remove_oldest();
-                assert(address_pointer_pair.size() <= PREF_DOMINO_PAIR_N);
-                assert(address_timer_pair.size() <= PREF_DOMINO_PAIR_N);
-            }
+        if(address_pointer_pair.find(next_addr) == address_pointer_pair.end()){
+
+            address_pointer_pair[next_addr] = pointer;
+            address_timer_pair[next_addr] = 1;
         }
-        address_pointer_pair[next_addr] = pointer;
-        address_timer_pair[next_addr] = timer;
-        most_recent_addr = next_addr;
+            
+        if(most_recent_pointer == 0)
+            most_recent_pointer = pointer;
+
+        if(address_timer_pair[next_addr] %4 == 0)
+            address_pointer_pair[next_addr] = pointer;
+
+        if(count %8 == 0)
+            most_recent_pointer = pointer;
+        count++;
+        address_timer_pair[next_addr]++;
+
     }
 };
 
@@ -118,58 +99,106 @@ struct Domino_prefetcher_t
     }
 
 
+    void prefetch_from_poinbuf(uns8 proc_id, Addr loadPC) {
+        uns maxpref = 8;
+        size_t readcount = std::min(maxpref, static_cast<uns>(PointBuf.size()));
+        for(size_t i = 0; i < readcount; i++) {
+            Addr addr = PointBuf.front();
+            PointBuf.erase(PointBuf.begin());
+            Addr lineIndex     = addr >> LOG2(DCACHE_LINE_SIZE);
+            if(pref_addto_ul1req_queue_set(proc_id, lineIndex, hwp_info->id,
+                                      0, loadPC, 0, FALSE) == FALSE) 
+            printf("error\n");
+        }
+    }
+
     void find_new_stream(uns8 proc_id, Addr lineAddr, Addr loadPC) {
         //first address is empty 
-        //if(first_address == 0) {
+        if(first_address == 0) {
             first_address = lineAddr;
+            //no match return
             if(EIT.find(first_address) == EIT.end())
                 return;
+
+
+
             uns start = EIT[first_address].most_recent_pointer;
 
             PointBuf.clear();
-            for(uns i = 1; i < 32 && start + i < GHB.size(); i++) {
+            for(uns i = 1; i < 128 && start + i < GHB.size(); i++) {
                 PointBuf.push_back(GHB[start + i]);
             }
 
-            uns maxpref = 16;
-            size_t readcount = std::min(maxpref, static_cast<uns>(PointBuf.size()));
-            for(size_t i = 0; i < readcount; i++) {
-                Addr addr = PointBuf.front();
-                PointBuf.erase(PointBuf.begin());
-                Addr lineIndex     = addr >> LOG2(DCACHE_LINE_SIZE);
-               if(pref_addto_ul1req_queue_set(proc_id, lineIndex, hwp_info->id,
-                                      0, loadPC, 0, FALSE) == FALSE) // FIXME
-                printf("error\n");
-            }
+            prefetch_from_poinbuf(proc_id, loadPC);
 
-        //}
+            return;
+        }
 
         //Has first_addr and match second_addr
+        second_address = lineAddr;
 
+        //if first+second match
+        if(EIT[first_address].address_pointer_pair.find(second_address) != EIT[first_address].address_pointer_pair.end()) {
+            uns start = EIT[first_address].get_ghb_pointer(second_address);
+            PointBuf.clear();
+            for(uns i = 1; i < 128 && start + i < GHB.size(); i++) {
+                PointBuf.push_back(GHB[start + i]);
+            }
+            first_address = lineAddr;
+            prefetch_from_poinbuf(proc_id, loadPC);
+
+            return;
+        } else {
+            first_address = lineAddr;
+            second_address = 0;
+            if(EIT.find(first_address) == EIT.end())
+                return;
+
+            uns start = EIT[first_address].most_recent_pointer;
+
+            PointBuf.clear();
+            for(uns i = 1; i < 128 && start + i < GHB.size(); i++) {
+                PointBuf.push_back(GHB[start + i]);
+            }
+
+            prefetch_from_poinbuf(proc_id, loadPC);
+
+            return;
+        }
     }
 
     void pref_domino_replay(uns8 proc_id, Addr lineAddr, Addr loadPC, Flag is_hit) {
 
         /** if prefetch hit, then prefetch from poinbuf */
+        if(is_hit == TRUE) {
+            first_address = 0;
+            prefetch_from_poinbuf(proc_id, loadPC);
+            return;
+        }
 
         /**cache miss */
-        find_new_stream(proc_id, lineAddr, loadPC);
+        if(is_hit == FALSE)
+            find_new_stream(proc_id, lineAddr, loadPC);
     }
 
     void pref_domino_record(Addr lineAddr) {
         //initial state: no history
-        // if(last_address == 0) {
-        //     last_address = lineAddr;
-        //     GHB.push_back(lineAddr);
-        // }
-        GHB.push_back(lineAddr);
-        if(EIT.find(lineAddr) == EIT.end())
-            EIT[lineAddr] = EIT_Entry();
-        
-        if(EIT[lineAddr].count%16 == 0) {
-            EIT[lineAddr].most_recent_pointer = GHB.size() - 1;
-            EIT[lineAddr].count++;
+        if(last_address == 0) {
+            last_address = lineAddr;
+            GHB.push_back(lineAddr);
+            return;
         }
+
+        GHB.push_back(lineAddr);
+        if(EIT.find(last_address) == EIT.end()) {
+            EIT[last_address] = EIT_Entry();
+            EIT[last_address].update(lineAddr, GHB.size()-1);
+            last_address = lineAddr;
+            return;
+        }
+
+        EIT[last_address].update(lineAddr, GHB.size()-1);
+        last_address = lineAddr;
 
     }
 
@@ -178,7 +207,6 @@ struct Domino_prefetcher_t
         /**first replay then record */
         pref_domino_replay(proc_id, lineAddr, loadPC, is_hit);
 
-       
         pref_domino_record(lineAddr);
     }
     
