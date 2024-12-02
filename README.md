@@ -19,6 +19,5 @@ To implement this, each core keeps a History Buffer and an Index Table; the Hist
 - **pref_common.c**
 - **pref_table.def**
 - **param_files.def**
-- **pref_table.def**
 
 All had minor changes to add Domino to the existing prefetcher structure
