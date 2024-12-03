@@ -148,32 +148,23 @@ void pref_ghb_umlc_miss(uns8 proc_id, Addr lineAddr, Addr loadPC,
 void pref_ghb_train(Pref_GHB* ghb_hwp, uns8 proc_id, Addr lineAddr, Addr loadPC,
                         Flag is_hit) {
   // 1. adds address to ghb
-  // 2. sends upto "degree" prefetches to the prefQ
+  // 2. sends up to "degree" prefetches to the prefQ
   int ii;
   int czone_idx = -1;
   int old_ptr   = -1;
 
-  int ghb_idx = -1;
-  int delta1  = 0;
-  int delta2  = 0;
-
-  int num_pref_sent    = 0;
-  int deltab_head      = -1;
-  int curr_deltab_size = 0;
-
-  Addr lineIndex     = lineAddr >> LOG2(DCACHE_LINE_SIZE);
-  Addr currLineIndex = lineIndex;
-  Addr index_tag     = CZONE_TAG(lineAddr);
+  Addr index_tag = CZONE_TAG(lineAddr);
 
   for(ii = 0; ii < PREF_GHB_INDEX_N; ii++) {
     if(index_tag == ghb_hwp->index_table[ii].czone_tag &&
        ghb_hwp->index_table[ii].valid) {
-      // got a hit in the index table
+      // Got a hit in the index table
       czone_idx = ii;
       old_ptr   = ghb_hwp->index_table[ii].ghb_ptr;
       break;
     }
   }
+
   if(czone_idx == -1) {
     if(is_hit) {  // ONLY TRAIN on hit
       return;
@@ -181,7 +172,6 @@ void pref_ghb_train(Pref_GHB* ghb_hwp, uns8 proc_id, Addr lineAddr, Addr loadPC,
 
     // Not present in index table.
     // Make new czone
-    // First look if any entry is unused
     for(ii = 0; ii < PREF_GHB_INDEX_N; ii++) {
       if(!ghb_hwp->index_table[ii].valid) {
         czone_idx = ii;
@@ -193,9 +183,7 @@ void pref_ghb_train(Pref_GHB* ghb_hwp, uns8 proc_id, Addr lineAddr, Addr loadPC,
       }
     }
   }
-  if(old_ptr != -1 && ghb_hwp->ghb_buffer[old_ptr].miss_index == lineIndex) {
-    return;
-  }
+
   if(PREF_THROTTLE_ON) {
     pref_ghb_throttle(ghb_hwp);
   }
@@ -205,72 +193,34 @@ void pref_ghb_train(Pref_GHB* ghb_hwp, uns8 proc_id, Addr lineAddr, Addr loadPC,
 
   pref_ghb_create_newentry(ghb_hwp, czone_idx, lineAddr, index_tag, old_ptr);
 
-  for(ii = 0; ii < ghb_hwp->deltab_size; ii++)
-    ghb_hwp->delta_buffer[ii] = 0;
+  // Prefetch based on temporal locality
+  if(old_ptr != -1) {
+    int ghb_idx = old_ptr;
+    int num_pref_sent = 0;
 
-  // Now ghb_tail points to the new entry. Work backwards to find a 2 delta
-  // match...
-  ghb_idx = ghb_hwp->ghb_buffer[ghb_hwp->ghb_tail].ghb_ptr;
-  DEBUG(0, "hit:%d lineidx:%llx loadPC:%llx\n", is_hit, lineIndex, loadPC);
-  while(ghb_idx != -1 && num_pref_sent < ghb_hwp->pref_degree) {
-    int delta = currLineIndex - ghb_hwp->ghb_buffer[ghb_idx].miss_index;
-    if(delta > 100 || delta < -100)
-      break;
-
-    // insert into delta buffer
-    deltab_head = (deltab_head + 1) % ghb_hwp->deltab_size;
-    ghb_hwp->delta_buffer[deltab_head] = delta;
-    curr_deltab_size++;
-    if(delta1 == 0) {
-      delta1 = delta;
-    } else if(delta2 == 0) {
-      delta2 = delta;
-    } else {
-      DEBUG(0, "delta1:%d, delta2:%d", delta1, delta2);
-      // Catch strides quickly
-      if(delta1 == delta2) {
-        for(; num_pref_sent < ghb_hwp->pref_degree; num_pref_sent++) {
-          lineIndex += delta1;
-          ASSERT(proc_id,
-                 proc_id == (lineIndex >> (58 - LOG2(DCACHE_LINE_SIZE))));
-          if(ghb_hwp->type == UMLC)pref_addto_umlc_req_queue(
-               proc_id, lineIndex, ghb_hwp->hwp_info->id);
-          else pref_addto_ul1req_queue_set(proc_id, lineIndex, ghb_hwp->hwp_info->id,
-                                      0, loadPC, 0, FALSE);  // FIXME
-        }
+    // Prefetch up to 8 entries starting from the pointer
+    while(ghb_idx != -1 && num_pref_sent < 8) {
+      Addr prefetchLineIndex = ghb_hwp->ghb_buffer[ghb_idx].miss_index;
+      
+      ASSERT(proc_id, proc_id == (prefetchLineIndex >> (58 - LOG2(DCACHE_LINE_SIZE))));
+      if(ghb_hwp->type == UMLC) {
+        pref_addto_umlc_req_queue(proc_id, prefetchLineIndex, ghb_hwp->hwp_info->id);
       } else {
-        if(delta1 ==
-             ghb_hwp->delta_buffer[(deltab_head - 1) % ghb_hwp->deltab_size] &&
-           delta2 == ghb_hwp->delta_buffer[deltab_head]) {
-          // found a match
-          // lets go for a walk
-          int deltab_idx       = (deltab_head - 2) % ghb_hwp->deltab_size;
-          int deltab_start_idx = deltab_idx;
-          for(; num_pref_sent < ghb_hwp->pref_degree; num_pref_sent++) {
-            lineIndex += ghb_hwp->delta_buffer[deltab_idx];
-            ASSERT(proc_id,
-                   proc_id == (lineIndex >> (58 - LOG2(DCACHE_LINE_SIZE))));
-            if(ghb_hwp->type == UMLC)pref_addto_umlc_req_queue(
-               proc_id, lineIndex, ghb_hwp->hwp_info->id);
-            else pref_addto_ul1req_queue_set(proc_id, lineIndex, ghb_hwp->hwp_info->id,
-                                      0, loadPC, 0, FALSE);  // FIXME
-            DEBUG(0, "Sent %llx\n", lineIndex);
-            deltab_idx = CIRC_DEC(deltab_idx, ghb_hwp->deltab_size);
-            if(deltab_idx > curr_deltab_size) {
-              deltab_idx = deltab_start_idx;
-            }
-          }
-          break;
-        }
+        pref_addto_ul1req_queue_set(proc_id, prefetchLineIndex, ghb_hwp->hwp_info->id,
+                                    0, loadPC, 0, FALSE);
       }
+      
+      DEBUG(0, "Sent %llx\n", prefetchLineIndex);
+      ghb_idx = ghb_hwp->ghb_buffer[ghb_idx].ghb_ptr;
+      num_pref_sent++;
     }
-    currLineIndex = ghb_hwp->ghb_buffer[ghb_idx].miss_index;
-    ghb_idx       = ghb_hwp->ghb_buffer[ghb_idx].ghb_ptr;
-  }
-  if(num_pref_sent) {
-    DEBUG(0, "Num sent %d\n", num_pref_sent);
+
+    if(num_pref_sent > 0) {
+      DEBUG(0, "Num sent %d\n", num_pref_sent);
+    }
   }
 }
+
 
 void pref_ghb_create_newentry(Pref_GHB* ghb_hwp, int idx, Addr line_addr, Addr czone_tag,
                               int old_ptr) {
